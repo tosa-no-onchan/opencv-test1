@@ -1,0 +1,8 @@
+
+1. OpenCV を C++ から扱うためのサンプルコード
+
+https://www.qoosky.io/techs/ad1e4deb05
+
+2.『OpenCVによる画像処理入門』サンプルプログラム
+
+https://www.kspub.co.jp/download/1538221.html
