@@ -1,5 +1,5 @@
 /*
-* main8.cpp
+* main9.cpp
 * /map を pgm ファイルに落とした画像を取り込んで
 * 未知領域に接する、自由領域のセルのみで、ブロブを作ります。
 * 上記ブロブの中で一番大きな領域を選んで、そのブロブの重心を算出します。
@@ -9,10 +9,10 @@
 * 「OpenCVによる画像処理入門」(講談社)
 * P167 ラベル C言語版
 * P161 重心 C++ 版
-* 
+* https://imura-lab.org/products/labeling/
 */
 #include <opencv2/opencv.hpp>
-
+#include "Labeling.h"
 
 //#define USE_MAP_SAVER 
 // map_server/map_saver の画像を使う時は、こちらを使って下さい。
@@ -49,7 +49,7 @@ int main() {
     //cv::namedWindow("thres", cv::WINDOW_NORMAL);
     cv::namedWindow("unknown", cv::WINDOW_NORMAL);
     cv::namedWindow("block", cv::WINDOW_NORMAL);
-    cv::namedWindow("label", cv::WINDOW_NORMAL);
+
     cv::namedWindow("blob", cv::WINDOW_NORMAL);
 
 
@@ -244,10 +244,13 @@ int main() {
     //cv::waitKey(0);
     //return 0;
 
-
     //----------------------
     // 3. 上でマークされたブロックをブロブ分割(ラベリング)します。
+    // 今回は、Labeling.h を使います。
+    // https://imura-lab.org/products/labeling/
     //-----------------------
+
+    LabelingBS	labeling;
 
     int nlabel =0;  // 使用済ラベルの数(次割当ラベル番号)
     //int w = img.cols;
@@ -255,205 +258,39 @@ int main() {
     //int h = img.rows;
     h = size_y_;
 
-    cv::Mat mat_label = cv::Mat::zeros(h,w,CV_8U);
-    cv::Mat mat_label2 = cv::Mat::zeros(h,w,CV_8U);
+    //cv::Mat mat_label = cv::Mat::zeros(h,w,CV_8U);
+    //cv::Mat mat_label2 = cv::Mat::zeros(h,w,CV_8U);
 
-    const int TABLESIZE = 1024;
-    static int l_no[TABLESIZE];        // pass1 label 使用番号 管理テーブル
-    l_no[0]=0;
+	cv::Mat mat_blob;
 
-    int img_l[w*h];             // 読み込み 画像 の 有意画素に、ラベルを割り当てた画素テーブル
-    for(int y=0;y<h;y++){
-        for(int x=0;x < w;x++){
-            img_l[y*w + x] = 0;
-        }
-    }
- 
+	cv::Mat img_lab(h,w, CV_16SC1);
 
-    // 1回目の走査
-    // 結果は、 label_t[][] に入れる。
-    for(int y = 0 ; y < h; y++){
-        for (int x=0;x < w; x++){
-            //std::cout << "y=" << y << ",x=" << x << std::endl;
-            // カレント画素は、ターゲットでない(黒)
-            if(block.data[y*w+x] == 0){
-               img_l[y * w + x] = 0;
-            }
-            // カレント画素は、ターゲット(白)
-            else{
-                // 近傍4画素(上3画素と左1画素) をチェック
-                const int N = 4;
-                //const int dy[N] = {-1, 0, 1, -1};
-                const int dy[N] = {-1, 0, -1, -1};
-                //const int dx[N] = {-1, -1, -1, 0};
-                const int dx[N] = {-1, -1, 0, 1};
+    //short *result = new short[ w * h ];
 
-                int n4_l[N];    // 近傍4画素の、使用中ラベル番号を保管
-                int count =0;
-                for(int k = 0; k < N; k++){
-                    int xdx = x + dx[k];
-                    int ydy = y + dy[k];
-                    int m = ydy * w + xdx;
-                    // はみ出していない and 近傍4画素 img_t[m] は、ラベル割りあて済
-                    if(xdx >= 0 && ydy >= 0 && xdx < w && ydy < h && img_l[m] != 0){
-                        //std::cout << "m=" << m << std::endl;
-                        if(m > h*w){
-                            std::cout << "error " << std::endl;
-                        }
-                        std::cout << "label[" << m << "]=" << img_l[m] << std::endl;
+    labeling.Exec( block.data, (short *)img_lab.data, w, h, true, 0 );
 
-                        // 近傍4画素の使用中ラベル番号を記録
-                        n4_l[count] = l_no[img_l[m]];
-                        //n4_l[count] = img_t[m];
-                        count++;
-                    }
-                }
+    int n = labeling.GetNumOfResultRegions();   // ラベル総数
 
-                // 近傍4画素には、ラベル割りあて済が無い。
-                if(count == 0){
-                    // 4画素いずれもラベルがなかった場合
-                    if(nlabel < TABLESIZE -1){
-                        nlabel++;   // 割当ラベル番号の更新
-                        img_l[y * w +x] = nlabel;
-                        l_no[nlabel] = nlabel;
-                    }
-                }
-                else{
-                    // n4_l[] : 近傍4画素のラベル番号の ソート
-                    // sort(list,list + count)
-                    // http://www.cc.kyoto-su.ac.jp/~yamada/ap/qsort.html
-                    qsort(n4_l, count, sizeof(int), compare_int);
-
-                    // n4_l[]から重複を省いたものを n4_l2[]へ
-                    int n4_l2[N];   // 近傍4画素の 使用中ラベル番号2 
-                    int uniq = 1;
-                    n4_l2[0] = n4_l[0]; // ラベルの最小値をセット
-
-                    for(int k=1; k< count;k++){
-                        if(n4_l[k] != n4_l2[uniq - 1]){
-                            n4_l2[uniq] = n4_l[k];
-                            uniq++;
-                        }
-                    }
-                    // カレント画素のラベル値 に 近傍4画素 のうち最小ラベル値を セット
-                    img_l[y * w +x] = n4_l2[0];
-                    // ラベル値が2以上の場合に以下を実行
-                    for(int k=1; k < uniq; k++){
-                        l_no[n4_l2[k]] = n4_l2[0];  // 重複している、ラベル番号は、最小番号に変更。
-                                                            // 但し、img_t[x] は、そのまま残る。
-                                                            // 古いラベル番号は、l_number のエントリー番号が該当
-                    }
-                }
-            }
-        }
-    }
-
-
-    std::cout << "img_l[0]= " << (int)img_l[0] << std::endl;
-
-
-    // 連結しているラベルを結合し、ラベル値の中抜けがないように変換表をつくる
-    static u_char l_n2[TABLESIZE];
-    int k2 = 0;
-
-    #define MAXVALUE 255
-
-    // pass1 割当済ラベル　管理テーブル の中で、
-    // 下記状況は、ありえるの?
-    // l_no[] = {0, 1, 2, 3, 1, 5, 4, 4 }
-    // l_no[] = {0, 1, 2, 3, 1, 5, 1, 1 }
-    for(int k=0; k <= nlabel; k++){
-        if(l_no[k] == k){
-            // ラベル値の対応が一致している場合:中抜けの無い新たな対応表を作る
-            if(k2 <= MAXVALUE){
-                l_n2[k] = k2;
-                k2 ++;
-            }
-            else{
-                // MAXVALUE より大きなラベル値は、捨てる
-                l_n2[k] = 0;
-            }
-        }
-        else{
-            // pass1 ラベル値の対応が一致していない場合:対応するラベル値の最小値を探す
-            int kk =k;
-            do {
-                kk = l_no[kk];
-            } while(l_no[kk] != kk);
-            l_no[k] = kk;
-        }
-    }
-
-    std::vector<int> blob_cnt(10,0);
-
-    // 2回目の走査
-    for(int y = 0; y < h;y++){
-        for(int x=0;x < w;x++){
-            int cur = y * w +x;
-            if(l_n2[l_no[img_l[cur]]] == 0){
-                mat_label.data[cur] = 0xff;
-            }
-            else{
-                // 表示は下記が良いでしょう
-                mat_label.data[cur] = COLOR_1 + l_n2[l_no[img_l[cur]]] * 10;
-
-                // l_n2[l_no[img_l[y * w +x]]] が、該当素子のラベル番号なので
-                // ラベル番号 毎の、その件数を記録すると共に、
-                // ラベル番号毎に、該当ブロックを Vector に保管が必要です。
-                // または、mat_label2.data を使って処理するか。
-                mat_label2.data[cur] = l_n2[l_no[img_l[cur]]];
-                if(l_n2[l_no[img_l[cur]]] < blob_cnt.size()){
-                    blob_cnt[l_n2[l_no[img_l[cur]]]]++;
-                }
-                else{
-                    blob_cnt.push_back(1);
-                }
-            }
-        }
-    }
-    cv::imshow("label", mat_label);
-
-    //cv::waitKey(0);
-    //return 0;
-
+    std::cout << "n=" << n << std::endl;
 
     //----------------------
     //4. ラベリングされたブロブで大きなブロブを
     // 1つ選んで、それの重心を求めて、その場所を、ロボットの移動場所とします。
     //----------------------
 
-    cv::Mat mat_blob = cv::Mat::zeros(h,w,CV_8U);
+    RegionInfoBS	*ri;
+    ri = labeling.GetResultRegionInfo( 0 );
 
-    int max_blob_no=1;
-    int max_cnt=0;
 
-    // 一番大きいブロブ番後を得る
-    for(int i=1;i<blob_cnt.size();i++){
-        //std::cout << "blob_cnt[" << i << "]=" << blob_cnt[i] << std::endl;
-        if(blob_cnt[i] > max_cnt){
-            max_cnt = blob_cnt[i];
-            max_blob_no=i;
-        }
-    }
+	cv::compare(img_lab, 1, mat_blob, cv::CMP_EQ); // ラベル番号1 を抽出
 
-    std::cout << "max_blob_no=" << max_blob_no << " , max_cnt=" << max_cnt << std::endl;
 
-    //該当ブロブだけを抽出します
-    for(int i =0;i < h*w;i++){
-        if(mat_label2.data[i] == max_blob_no){
-            mat_blob.data[i] = 0xff;    // 白
-        }
-    }
+    #define TEST_MARK_G 
+    #ifdef TEST_MARK_G
 
-    // 重心を求めます。
-    cv::Moments m = cv::moments(mat_blob, true);
-    double x_g = m.m10 / m.m00;
-    double y_g = m.m01 / m.m00;
+    float x_g,  y_g;
+    ri->GetCenter(x_g,y_g);   // 重心を得る
 
-	std::cout <<"w="<< w << ", h=" << h << std::endl;
-
-    //ここが、ロボットの移動先
-    // 実際使うには、 x_g,y_g を、標準座標に変換しないといけない。
 	std::cout <<"x_g="<< x_g << " , y_g=" << y_g << std::endl;
 
     // 印を付ける  -> グレーの X 印
@@ -462,13 +299,30 @@ int main() {
     mat_blob.data[(int)y_g*w+(int)x_g] = 128;
     mat_blob.data[((int)y_g+1)*w+(int)x_g-1] = 128;
     mat_blob.data[((int)y_g+1)*w+(int)x_g+1] = 128;
-    
+    #endif
+
     cv::imshow("blob", mat_blob);
 
+    //cv::waitKey(0);
+    //return 0;
 
+
+    //------------------------
+    // 5. 重心を全て求めてみます。
+    //-----------------------
+    std::cout <<"display all g center start" << std::endl;
+
+    for(int i=0;i<n;i++){
+        ri = labeling.GetResultRegionInfo( i );
+        ri->GetCenter(x_g,y_g);   // 重心を得る
+
+        std::cout <<"x_g="<< x_g << " , y_g=" << y_g << std::endl;
+    }
 
     cv::waitKey(0);
     return 0;
+
+
 }
 
 
